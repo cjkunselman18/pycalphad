@@ -11,6 +11,7 @@ from pycalphad.core.minimizer import site_fraction_differential, state_variable_
     fixed_component_differential, chemical_potential_differential
 import numpy as np
 from copy import copy
+from pycalphad.core.cache import lru_cache
 
 
 class Component(object):
@@ -274,6 +275,10 @@ class StateVariable(Symbol):
     """
     implementation_units = ''
     display_units = ''
+
+    @lru_cache(maxsize=10000)
+    def __new__(cls, *args, **kwargs):
+        return super().__new__(cls, *args, **kwargs)
 
     @property
     def display_name(self):
