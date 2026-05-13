@@ -11,7 +11,6 @@ from pycalphad.core.minimizer import site_fraction_differential, state_variable_
     fixed_component_differential, chemical_potential_differential
 import numpy as np
 from copy import copy
-from pycalphad.core.cache import lru_cache
 
 
 class Component(object):
@@ -276,10 +275,6 @@ class StateVariable(Symbol):
     implementation_units = ''
     display_units = ''
 
-    @lru_cache(maxsize=10000)
-    def __new__(cls, *args, **kwargs):
-        return super().__new__(cls, *args, **kwargs)
-
     @property
     def display_name(self):
         return self.name
@@ -416,6 +411,19 @@ class SiteFraction(StateVariable):
             result[0] += compset.dof[len(state_variables)+sitefrac_idx]
         return result
 
+    def jansson_derivative(self, compsets, cur_conds, chemical_potentials, deltas: JanssonDerivativeDeltas):
+        "Compute Jansson derivative with self as numerator, with the given deltas"
+        state_variables = None
+        # will likely break for MG
+        for idx, compset in self.filtered(compsets):
+            # we'll only hit this code path if this phase is present in the list of compsets
+            if state_variables is None:
+                state_variables = compsets[0].phase_record.state_variables
+            site_fractions = compset.phase_record.variables
+            sitefrac_idx = site_fractions.index(self._self_without_suffix)
+            return deltas.delta_sitefracs[idx][sitefrac_idx]
+        raise ValueError("Not found")
+
     def __reduce__(self):
         return self.__class__, (self.phase_name, self.sublattice_index, self.species)
 
@@ -487,6 +495,9 @@ class PhaseFraction(StateVariable):
 
     def expand_wildcard(self, phase_names):
         return [self.__class__(phase_name) for phase_name in phase_names]
+
+    def __reduce__(self):
+        return self.__class__, (self.phase_name,)
 
     def _latex(self, printer=None):
         "LaTeX representation."
@@ -655,6 +666,17 @@ class MassFraction(StateVariable):
         super().__init__(varname)
         self.phase_name = phase_name
         self.species = species
+
+    def expand_wildcard(self, phase_names=None, components=None):
+        if phase_names is not None:
+            return [self.__class__(phase_name, self.species) for phase_name in phase_names]
+        elif components is not None:
+            if self.phase_name is None:
+                return [self.__class__(comp) for comp in components]
+            else:
+                return [self.__class__(self.phase_name, comp) for comp in components]
+        else:
+            raise ValueError('Both phase_names and components are None')
 
     def compute_property(self, compsets, cur_conds, chemical_potentials):
         result = np.atleast_1d(np.zeros(self.shape))
@@ -838,6 +860,9 @@ class ChemicalPotential(StateVariable):
         return JanssonDerivativeDeltas(delta_chemical_potentials=delta_chemical_potentials, delta_statevars=delta_statevars,
                                    delta_phase_amounts=delta_phase_amounts, delta_sitefracs=compsets_delta_sitefracs,
                                    delta_parameters=None)
+
+    def __reduce__(self):
+        return self.__class__, (self.species,)
 
     def _latex(self, printer=None):
         "LaTeX representation."
